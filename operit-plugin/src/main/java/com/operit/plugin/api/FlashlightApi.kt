@@ -17,7 +17,13 @@ class FlashlightApi(context: Context) {
     private var isFlashlightOn = false
     
     init {
-        setupCamera()
+        cameraManager?.also { manager ->
+            try {
+                setupCamera()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
     
     private fun setupCamera() {

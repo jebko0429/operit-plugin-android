@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.operit.plugin"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.operit.plugin"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
     }
@@ -25,8 +25,8 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures {
         compose = true
@@ -55,19 +55,15 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     debugImplementation(libs.androidx.ui.tooling)
     
-    // Material Components for theme
-    implementation("com.google.android.material:material:1.11.0")
+    // Material Components
+    implementation("com.google.android.material:material:1.12.0")
     
     // NanoHTTPD for local HTTP server
     implementation("org.nanohttpd:nanohttpd:2.3.1")
-    implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")
     
     // Gson for JSON handling
     implementation("com.google.code.gson:gson:2.10.1")
     
-    // Coroutines for async operations
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    
-    // Security for API key hashing
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 }

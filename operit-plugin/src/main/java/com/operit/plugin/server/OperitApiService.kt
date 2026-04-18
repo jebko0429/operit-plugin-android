@@ -119,7 +119,7 @@ class OperitApiService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Operit Plugin")
             .setContentText("API server running on localhost:8765 (device-only)")
-            .setSmallIcon(android.R.drawable.ic_menu_preferences)
+            .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setContentIntent(mainPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
