@@ -1,0 +1,11 @@
+com.operit.plugin
+color black
+color purple_200
+color purple_500
+color purple_700
+color teal_200
+color teal_700
+color white
+string app_name
+style Theme_OperitPlugin
+xml file_paths

@@ -1,0 +1,202 @@
+package com.operit.plugin
+
+import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.util.Log
+import androidx.core.content.ContextCompat
+import com.google.gson.Gson
+import com.operit.plugin.api.*
+import com.operit.plugin.data.ApiResponse
+import com.operit.plugin.server.OperitApiService
+
+/**
+ * BroadcastReceiver for receiving API requests via Intents
+ * Alternative to HTTP for secure cross-app communication
+ */
+class OperitApiReceiver : BroadcastReceiver() {
+    
+    companion object {
+        private const val TAG = "OperitApiReceiver"
+        private val gson = Gson()
+        
+        // Intent extras keys
+        const val EXTRA_ACTION = "action"
+        const val EXTRA_PARAMS = "params"
+        const val EXTRA_CALLBACK = "callback_action"
+        
+        // Response action
+        const val ACTION_RESPONSE = "com.operit.plugin.API_RESPONSE"
+        const val EXTRA_RESPONSE = "response"
+        const val EXTRA_REQUEST_ID = "request_id"
+    }
+    
+    private lateinit var deviceApi: DeviceApi
+    private lateinit var flashlightApi: FlashlightApi
+    private lateinit var smsApi: SmsApi
+    private lateinit var audioApi: AudioApi
+    
+    override fun onReceive(context: Context, intent: Intent) {
+        Log.d(TAG, "Received intent action: ${intent.action}")
+        
+        // Initialize APIs
+        deviceApi = DeviceApi(context)
+        flashlightApi = FlashlightApi(context)
+        smsApi = SmsApi(context)
+        audioApi = AudioApi(context)
+        
+        val action = intent.getStringExtra(EXTRA_ACTION) ?: return
+        val params = intent.getStringExtra(EXTRA_PARAMS) ?: "{}"
+        val requestId = intent.getStringExtra(EXTRA_REQUEST_ID) ?: System.currentTimeMillis().toString()
+        val callbackAction = intent.getStringExtra(EXTRA_CALLBACK) ?: ACTION_RESPONSE
+        
+        val response = handleAction(context, action, params)
+        
+        // Send response back
+        sendResponse(context, callbackAction, requestId, response, intent)
+    }
+    
+    private fun handleAction(context: Context, action: String, params: String): ApiResponse {
+        val paramMap = try {
+            gson.fromJson(params, Map::class.java) as? Map<String, String> ?: emptyMap()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        
+        return try {
+            when (action) {
+                // Device info
+                "device.info" -> deviceApi.getDeviceInfo()
+                "device.battery" -> deviceApi.getBatteryInfo()
+                "device.storage" -> deviceApi.getStorageInfo()
+                "device.memory" -> deviceApi.getMemoryInfo()
+                "device.wifi" -> deviceApi.getWifiInfo()
+                
+                // Device control
+                "device.brightness.get" -> deviceApi.getScreenBrightness()
+                "device.brightness.set" -> {
+                    val brightness = paramMap["brightness"]?.toIntOrNull() ?: 128
+                    deviceApi.setScreenBrightness(brightness)
+                }
+                "device.wifi.enable" -> {
+                    val enabled = paramMap["enabled"]?.toBoolean() ?: true
+                    deviceApi.setWifiEnabled(enabled)
+                }
+                
+                // Flashlight
+                "flashlight.on" -> flashlightApi.turnOn()
+                "flashlight.off" -> flashlightApi.turnOff()
+                "flashlight.toggle" -> flashlightApi.toggle()
+                "flashlight.status" -> flashlightApi.getState()
+                
+                // SMS (requires permission check)
+                "sms.send" -> {
+                    if (!hasSmsPermission(context)) {
+                        ApiResponse.error("SMS permission denied")
+                    } else {
+                        val phone = paramMap["phone"] ?: ""
+                        val message = paramMap["message"] ?: ""
+                        val sim = paramMap["sim"]?.toIntOrNull() ?: -1
+                        if (phone.isEmpty() || message.isEmpty()) {
+                            ApiResponse.error("Missing phone or message")
+                        } else {
+                            smsApi.sendSms(phone, message, sim)
+                        }
+                    }
+                }
+                "sms.inbox" -> {
+                    if (!hasSmsPermission(context)) {
+                        ApiResponse.error("READ_SMS permission denied")
+                    } else {
+                        val limit = paramMap["limit"]?.toIntOrNull() ?: 50
+                        smsApi.readInbox(limit)
+                    }
+                }
+                "sms.sent" -> {
+                    if (!hasSmsPermission(context)) {
+                        ApiResponse.error("READ_SMS permission denied")
+                    } else {
+                        val limit = paramMap["limit"]?.toIntOrNull() ?: 50
+                        smsApi.readSent(limit)
+                    }
+                }
+                
+                // Audio
+                "audio.info" -> audioApi.getAudioInfo()
+                "audio.volume.music" -> {
+                    val level = paramMap["level"]?.toIntOrNull()
+                    if (level != null) audioApi.setMusicVolume(level) else audioApi.getAudioInfo()
+                }
+                "audio.volume.ring" -> {
+                    val level = paramMap["level"]?.toIntOrNull()
+                    if (level != null) audioApi.setRingVolume(level) else audioApi.getAudioInfo()
+                }
+                "audio.volume.notification" -> {
+                    val level = paramMap["level"]?.toIntOrNull()
+                    if (level != null) audioApi.setNotificationVolume(level) else audioApi.getAudioInfo()
+                }
+                "audio.ringer" -> {
+                    val mode = paramMap["mode"] ?: ""
+                    if (mode.isEmpty()) audioApi.getAudioInfo() else audioApi.setRingerMode(mode)
+                }
+                "audio.speakerphone" -> {
+                    val enabled = paramMap["enabled"]?.toBoolean() ?: true
+                    audioApi.setSpeakerphone(enabled)
+                }
+                "audio.play.notification" -> audioApi.playNotification()
+                
+                // Service control
+                "service.start" -> {
+                    OperitApiService.isRunning = true
+                    val serviceIntent = Intent(context, OperitApiService::class.java)
+                    serviceIntent.action = OperitApiService.ACTION_START
+                    ContextCompat.startForegroundService(context, serviceIntent)
+                    ApiResponse.success(mapOf("started" to true))
+                }
+                "service.stop" -> {
+                    val serviceIntent = Intent(context, OperitApiService::class.java)
+                    serviceIntent.action = OperitApiService.ACTION_STOP
+                    context.startService(serviceIntent)
+                    ApiResponse.success(mapOf("stopped" to true))
+                }
+                "service.status" -> ApiResponse.success(mapOf(
+                    "running" to OperitApiService.isRunning
+                ))
+                
+                else -> ApiResponse.error("Unknown action: $action")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling action $action: ${e.message}")
+            ApiResponse.error("Error: ${e.message}")
+        }
+    }
+    
+    private fun hasSmsPermission(context: Context): Boolean {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
+                PackageManager.PERMISSION_GRANTED
+    }
+    
+    private fun sendResponse(
+        context: Context,
+        callbackAction: String,
+        requestId: String,
+        response: ApiResponse,
+        originalIntent: Intent
+    ) {
+        val responseIntent = Intent().apply {
+            action = callbackAction
+            setPackage(originalIntent.`package` ?: context.packageName)
+            putExtra(EXTRA_RESPONSE, response.toJson())
+            putExtra(EXTRA_REQUEST_ID, requestId)
+        }
+        
+        try {
+            context.sendBroadcast(responseIntent)
+            Log.d(TAG, "Response sent to $callbackAction")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send response: ${e.message}")
+        }
+    }
+}

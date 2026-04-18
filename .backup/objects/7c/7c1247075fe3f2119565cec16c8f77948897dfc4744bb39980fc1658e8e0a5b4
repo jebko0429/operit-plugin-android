@@ -1,0 +1,301 @@
+package com.operit.plugin.api
+
+import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.bluetooth.BluetoothAdapter
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.wifi.WifiManager
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Environment
+import android.os.StatFs
+import android.provider.Settings
+import android.telephony.TelephonyManager
+import com.operit.plugin.data.*
+import java.io.File
+import java.net.InetAddress
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/**
+ * Device information and control API
+ */
+class DeviceApi(private val context: Context) {
+    
+    /**
+     * Get comprehensive device information
+     */
+    @SuppressLint("HardwareIds")
+    fun getDeviceInfo(): ApiResponse {
+        return try {
+            val info = DeviceInfo(
+                manufacturer = Build.MANUFACTURER,
+                model = Build.MODEL,
+                device = Build.DEVICE,
+                product = Build.PRODUCT,
+                androidVersion = Build.VERSION.RELEASE,
+                sdkInt = Build.VERSION.SDK_INT,
+                brand = Build.BRAND,
+                hardware = Build.HARDWARE,
+                serial = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        Build.getSerial()
+                    } else {
+                        Build.SERIAL
+                    }
+                } catch (e: Exception) {
+                    "unknown"
+                },
+                id = Build.ID,
+                bootloader = Build.BOOTLOADER,
+                board = Build.BOARD,
+                fingerprint = Build.FINGERPRINT
+            )
+            ApiResponse.success(info)
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get device info: ${e.message}")
+        }
+    }
+    
+    /**
+     * Get battery information
+     */
+    fun getBatteryInfo(): ApiResponse {
+        return try {
+            val intent = context.registerReceiver(null, 
+                IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                ?: return ApiResponse.error("Cannot access battery info")
+            
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            val percentage = if (level >= 0 && scale > 0) {
+                (level * 100 / scale)
+            } else -1
+            
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                    status == BatteryManager.BATTERY_STATUS_FULL
+            
+            val batteryStatus = when (status) {
+                BatteryManager.BATTERY_STATUS_CHARGING -> "charging"
+                BatteryManager.BATTERY_STATUS_DISCHARGING -> "discharging"
+                BatteryManager.BATTERY_STATUS_FULL -> "full"
+                BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "not_charging"
+                BatteryManager.BATTERY_STATUS_UNKNOWN -> "unknown"
+                else -> "unknown"
+            }
+            
+            val temperature = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) / 10f
+            val voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)
+            val technology = intent.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY) ?: "unknown"
+            
+            val health = when (intent.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)) {
+                BatteryManager.BATTERY_HEALTH_GOOD -> "good"
+                BatteryManager.BATTERY_HEALTH_OVERHEAT -> "overheat"
+                BatteryManager.BATTERY_HEALTH_DEAD -> "dead"
+                BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "over_voltage"
+                BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "unspecified_failure"
+                BatteryManager.BATTERY_HEALTH_COLD -> "cold"
+                else -> "unknown"
+            }
+            
+            val plugged = when (intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)) {
+                BatteryManager.BATTERY_PLUGGED_AC -> "ac"
+                BatteryManager.BATTERY_PLUGGED_USB -> "usb"
+                BatteryManager.BATTERY_PLUGGED_WIRELESS -> "wireless"
+                else -> if (isCharging) "unknown" else "unplugged"
+            }
+            
+            ApiResponse.success(BatteryInfo(
+                level = level,
+                scale = scale,
+                percentage = percentage,
+                status = batteryStatus,
+                isCharging = isCharging,
+                temperature = temperature,
+                voltage = voltage,
+                technology = technology,
+                health = health,
+                plugged = plugged
+            ))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get battery info: ${e.message}")
+        }
+    }
+    
+    /**
+     * Get storage information
+     */
+    fun getStorageInfo(): ApiResponse {
+        return try {
+            val statInternal = StatFs(Environment.getDataDirectory().path)
+            val blockSize = statInternal.blockSizeLong
+            val totalBlocks = statInternal.blockCountLong
+            val availableBlocks = statInternal.availableBlocksLong
+            
+            val totalInternal = totalBlocks * blockSize
+            val availableInternal = availableBlocks * blockSize
+            
+            val externalStats = try {
+                val externalDir = context.getExternalFilesDir(null)
+                externalDir?.let { File(it.absolutePath).parentFile?.absolutePath }?.let {
+                    val stat = StatFs(it)
+                    Pair(stat.blockCountLong * stat.blockSizeLong, 
+                         stat.availableBlocksLong * stat.blockSizeLong)
+                }
+            } catch (e: Exception) {
+                null
+            }
+            
+            ApiResponse.success(StorageInfo(
+                totalInternal = totalInternal,
+                availableInternal = availableInternal,
+                usedInternal = totalInternal - availableInternal,
+                totalExternal = externalStats?.first,
+                availableExternal = externalStats?.second
+            ))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get storage info: ${e.message}")
+        }
+    }
+    
+    /**
+     * Get memory information
+     */
+    fun getMemoryInfo(): ApiResponse {
+        return try {
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memoryInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memoryInfo)
+            
+            ApiResponse.success(MemoryInfo(
+                totalRam = memoryInfo.totalMem,
+                availableRam = memoryInfo.availMem,
+                lowMemory = memoryInfo.lowMemory,
+                threshold = memoryInfo.threshold,
+                usedRam = memoryInfo.totalMem - memoryInfo.availMem
+            ))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get memory info: ${e.message}")
+        }
+    }
+    
+    /**
+     * Get WiFi information
+     */
+    fun getWifiInfo(): ApiResponse {
+        return try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return ApiResponse.error("WiFi service not available")
+            
+            val connectionInfo = wifiManager.connectionInfo
+            val isEnabled = wifiManager.isWifiEnabled
+            
+            val ssid = connectionInfo?.ssid?.removePrefix("\"")?.removeSuffix("\"")
+            val bssid = connectionInfo?.bssid
+            
+            val ipAddress = connectionInfo?.ipAddress?.let { ip ->
+                InetAddress.getByAddress(
+                    ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
+                        .putInt(ip).array()
+                ).hostAddress
+            }
+            
+            ApiResponse.success(WifiInfo(
+                enabled = isEnabled,
+                connected = connectionInfo != null && connectionInfo.ssid != null && 
+                           !connectionInfo.ssid.contains("unknown"),
+                ssid = ssid,
+                bssid = bssid,
+                ipAddress = ipAddress,
+                linkSpeed = connectionInfo?.linkSpeed ?: 0,
+                rssi = connectionInfo?.rssi ?: 0,
+                frequency = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    connectionInfo?.frequency ?: 0
+                } else 0
+            ))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get WiFi info: ${e.message}")
+        }
+    }
+    
+    /**
+     * Control WiFi state
+     */
+    fun setWifiEnabled(enabled: Boolean): ApiResponse {
+        return try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return ApiResponse.error("WiFi service not available")
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val intent = Intent(Settings.ACTION_WIFI_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                return ApiResponse.success(mapOf(
+                    "enabled" to enabled,
+                    "note" to "Android 10+ requires user interaction. Settings opened."
+                ))
+            }
+            
+            val result = wifiManager.setWifiEnabled(enabled)
+            ApiResponse.success(mapOf("enabled" to result))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to set WiFi: ${e.message}")
+        }
+    }
+    
+    /**
+     * Get Bluetooth info
+     */
+    fun getBluetoothInfo(): ApiResponse {
+        return try {
+            val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
+            
+            if (bluetoothAdapter == null) {
+                return ApiResponse.error("Bluetooth not supported on this device")
+            }
+            
+            ApiResponse.success(mapOf(
+                "enabled" to bluetoothAdapter.isEnabled,
+                "address" to bluetoothAdapter.address,
+                "name" to bluetoothAdapter.name,
+                "state" to bluetoothAdapter.state
+            ))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get Bluetooth info: ${e.message}")
+        }
+    }
+    
+    fun getScreenBrightness(): ApiResponse {
+        return try {
+            val brightness = Settings.System.getInt(
+                context.contentResolver, 
+                Settings.System.SCREEN_BRIGHTNESS
+            )
+            val maxBrightness = 255
+            ApiResponse.success(mapOf(
+                "brightness" to brightness,
+                "max" to maxBrightness,
+                "percentage" to (brightness * 100 / maxBrightness)
+            ))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to get screen brightness: ${e.message}")
+        }
+    }
+    
+    fun setScreenBrightness(brightness: Int): ApiResponse {
+        return try {
+            val validBrightness = brightness.coerceIn(0, 255)
+            Settings.System.putInt(
+                context.contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                validBrightness
+            )
+            ApiResponse.success(mapOf("brightness" to validBrightness))
+        } catch (e: Exception) {
+            ApiResponse.error("Failed to set screen brightness: ${e.message}")
+        }
+    }
+}

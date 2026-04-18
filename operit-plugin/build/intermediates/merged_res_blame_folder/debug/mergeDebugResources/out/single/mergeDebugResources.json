@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "com.operit.plugin.operit-plugin-debug-3:/xml_file_paths.xml.flat",
+        "source": "com.operit.plugin.operit-plugin-main-5:/xml/file_paths.xml"
+    }
+]

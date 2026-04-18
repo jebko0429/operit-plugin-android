@@ -1,0 +1,219 @@
+package com.operit.plugin.server
+
+import android.content.Context
+import android.util.Log
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.operit.plugin.api.*
+import com.operit.plugin.data.ApiResponse
+import fi.iki.elonen.NanoHTTPD
+import java.io.IOException
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
+
+/**
+ * HTTP server that exposes Android APIs as REST endpoints
+ * Default port: 8765
+ */
+class OperitHttpServer(private val context: Context, port: Int = 8765) : NanoHTTPD(port) {
+    
+    companion object {
+        private const val TAG = "OperitHttpServer"
+        private val gson = Gson()
+    }
+    
+    private val deviceApi = DeviceApi(context)
+    private val flashlightApi = FlashlightApi(context)
+    private val smsApi = SmsApi(context)
+    private val audioApi = AudioApi(context)
+    
+    override fun start() {
+        try {
+            super.start()
+            Log.i(TAG, "HTTP server started on port $listeningPort")
+        } catch (e: IOException) {
+            Log.e(TAG, "Failed to start HTTP server: ${e.message}")
+            throw e
+        }
+    }
+    
+    override fun stop() {
+        super.stop()
+        Log.i(TAG, "HTTP server stopped")
+    }
+    
+    override fun serve(session: IHTTPSession): Response {
+        val method = session.method.toString()
+        val uri = session.uri
+        
+        Log.d(TAG, "[$method] $uri")
+        
+        return try {
+            // Parse body for POST requests
+            val bodyMap = mutableMapOf<String, String>()
+            if (method == "POST") {
+                val files = HashMap<String, String>()
+                session.parseBody(files)
+                val body = files["postData"] ?: "{}"
+                try {
+                    val jsonObject = JsonParser.parseString(body).asJsonObject
+                    jsonObject.entrySet().forEach {
+                        bodyMap[it.key] = it.value.asString
+                    }
+                } catch (e: Exception) {
+                    // Not JSON, try parsing as form data
+                    body.split("&").forEach { param ->
+                        val parts = param.split("=", limit = 2)
+                        if (parts.size == 2) {
+                            bodyMap[URLDecoder.decode(parts[0], StandardCharsets.UTF_8.name())] =
+                                URLDecoder.decode(parts[1], StandardCharsets.UTF_8.name())
+                        }
+                    }
+                }
+            }
+            
+            // Parse query parameters
+            val queryParams = session.parameters
+            val params = mutableMapOf<String, String>()
+            params.putAll(bodyMap)
+            queryParams.forEach { (key, values) ->
+                params[key] = values.firstOrNull() ?: ""
+            }
+            
+            val response = when {
+                // Health check
+                uri == "/" || uri == "/ping" -> ApiResponse.success(mapOf(
+                    "status" to "ok",
+                    "service" to "operit-plugin",
+                    "version" to "1.0.0"
+                ))
+                
+                // Device APIs
+                uri == "/api/device/info" -> deviceApi.getDeviceInfo()
+                uri == "/api/device/battery" -> deviceApi.getBatteryInfo()
+                uri == "/api/device/storage" -> deviceApi.getStorageInfo()
+                uri == "/api/device/memory" -> deviceApi.getMemoryInfo()
+                uri == "/api/device/wifi" -> deviceApi.getWifiInfo()
+                uri == "/api/device/bluetooth" -> deviceApi.getBluetoothInfo()
+                uri == "/api/device/brightness" -> when (method) {
+                    "GET" -> deviceApi.getScreenBrightness()
+                    "POST" -> {
+                        val brightness = params["brightness"]?.toIntOrNull() ?: 128
+                        deviceApi.setScreenBrightness(brightness)
+                    }
+                    else -> deviceApi.getScreenBrightness()
+                }
+                uri == "/api/device/wifi/enable" -> {
+                    val enabled = params["enabled"]?.toBoolean() ?: true
+                    deviceApi.setWifiEnabled(enabled)
+                }
+                
+                // Flashlight APIs
+                uri == "/api/flashlight/status" -> flashlightApi.isAvailable()
+                uri == "/api/flashlight/on" -> flashlightApi.turnOn()
+                uri == "/api/flashlight/off" -> flashlightApi.turnOff()
+                uri == "/api/flashlight/toggle" -> flashlightApi.toggle()
+                uri == "/api/flashlight/state" -> flashlightApi.getState()
+                
+                // SMS APIs
+                uri == "/api/sms/send" -> {
+                    val phoneNumber = params["phone"] ?: params["number"] ?: ""
+                    val message = params["message"] ?: params["text"] ?: params["body"] ?: ""
+                    val simSlot = params["sim"]?.toIntOrNull() ?: -1
+                    if (phoneNumber.isEmpty() || message.isEmpty()) {
+                        ApiResponse.error("Missing 'phone' or 'message' parameter")
+                    } else {
+                        smsApi.sendSms(phoneNumber, message, simSlot)
+                    }
+                }
+                uri == "/api/sms/inbox" -> {
+                    val limit = params["limit"]?.toIntOrNull() ?: 50
+                    smsApi.readInbox(limit)
+                }
+                uri == "/api/sms/sent" -> {
+                    val limit = params["limit"]?.toIntOrNull() ?: 50
+                    smsApi.readSent(limit)
+                }
+                uri == "/api/sms/conversations" -> {
+                    val limit = params["limit"]?.toIntOrNull() ?: 20
+                    smsApi.getConversations(limit)
+                }
+                uri.startsWith("/api/sms/delete/") -> {
+                    val messageId = uri.substringAfterLast("/")
+                    if (messageId.isNotEmpty()) {
+                        smsApi.deleteMessage(messageId)
+                    } else {
+                        ApiResponse.error("Missing message ID")
+                    }
+                }
+                uri.startsWith("/api/sms/read/") -> {
+                    val messageId = uri.substringAfterLast("/")
+                    if (messageId.isNotEmpty()) {
+                        smsApi.markAsRead(messageId)
+                    } else {
+                        ApiResponse.error("Missing message ID")
+                    }
+                }
+                
+                // Audio/Volume APIs
+                uri == "/api/audio/info" -> audioApi.getAudioInfo()
+                uri == "/api/audio/volume/music" -> when (method) {
+                    "GET" -> audioApi.getAudioInfo()
+                    "POST" -> {
+                        val level = params["level"]?.toIntOrNull() ?: params["volume"]?.toIntOrNull() ?: -1
+                        if (level < 0) audioApi.getAudioInfo() else audioApi.setMusicVolume(level)
+                    }
+                    else -> audioApi.getAudioInfo()
+                }
+                uri == "/api/audio/volume/ring" -> {
+                    val level = params["level"]?.toIntOrNull() ?: params["volume"]?.toIntOrNull() ?: -1
+                    if (level < 0) audioApi.getAudioInfo() else audioApi.setRingVolume(level)
+                }
+                uri == "/api/audio/volume/notification" -> {
+                    val level = params["level"]?.toIntOrNull() ?: params["volume"]?.toIntOrNull() ?: -1
+                    if (level < 0) audioApi.getAudioInfo() else audioApi.setNotificationVolume(level)
+                }
+                uri == "/api/audio/volume/alarm" -> {
+                    val level = params["level"]?.toIntOrNull() ?: params["volume"]?.toIntOrNull() ?: -1
+                    if (level < 0) audioApi.getAudioInfo() else audioApi.setAlarmVolume(level)
+                }
+                uri == "/api/audio/ringer" -> {
+                    val mode = params["mode"]?.lowercase() ?: ""
+                    if (mode.isEmpty()) audioApi.getAudioInfo() else audioApi.setRingerMode(mode)
+                }
+                uri == "/api/audio/speakerphone" -> {
+                    val enabled = params["enabled"]?.toBoolean() ?: params["on"]?.toBoolean() ?: true
+                    audioApi.setSpeakerphone(enabled)
+                }
+                uri == "/api/audio/play/notification" -> audioApi.playNotification()
+                uri == "/api/audio/play/ringtone" -> audioApi.playRingtone()
+                uri == "/api/audio/play/alarm" -> audioApi.playAlarm()
+                
+                // Mic mute
+                uri == "/api/audio/mic/mute" -> audioApi.setMicrophoneMute(true)
+                uri == "/api/audio/mic/unmute" -> audioApi.setMicrophoneMute(false)
+                
+                else -> ApiResponse.error("Unknown endpoint: $uri")
+            }
+            
+            jsonResponse(response)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling request: ${e.message}", e)
+            jsonResponse(ApiResponse.error("Server error: ${e.message}"), Status.INTERNAL_ERROR)
+        }
+    }
+    
+    private fun jsonResponse(response: ApiResponse, status: Status = Status.OK): Response {
+        return newFixedLengthResponse(
+            status,
+            "application/json",
+            response.toJson()
+        ).apply {
+            addHeader("Access-Control-Allow-Origin", "*")
+            addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            addHeader("Access-Control-Allow-Headers", "Content-Type")
+        }
+    }
+}

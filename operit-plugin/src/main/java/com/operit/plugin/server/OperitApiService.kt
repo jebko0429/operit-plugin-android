@@ -1,0 +1,128 @@
+package com.operit.plugin.server
+
+import android.app.*
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.IBinder
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.operit.plugin.R
+
+/**
+ * Foreground service that runs the HTTP API server
+ */
+class OperitApiService : Service() {
+    
+    companion object {
+        private const val TAG = "OperitApiService"
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "operit_plugin_channel"
+        private const val CHANNEL_NAME = "Operit Plugin Service"
+        
+        const val ACTION_START = "com.operit.plugin.ACTION_START"
+        const val ACTION_STOP = "com.operit.plugin.ACTION_STOP"
+        
+        var httpServer: OperitHttpServer? = null
+        var isRunning = false
+    }
+    
+    override fun onCreate() {
+        super.onCreate()
+        Log.d(TAG, "Service created")
+        createNotificationChannel()
+    }
+    
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "Service started with action: ${intent?.action}")
+        
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopService()
+                return START_NOT_STICKY
+            }
+            ACTION_START, null -> {
+                startForegroundService()
+            }
+        }
+        
+        return START_STICKY
+    }
+    
+    private fun startForegroundService() {
+        val notification = createNotification()
+        startForeground(NOTIFICATION_ID, notification)
+        
+        if (httpServer == null || !httpServer!!.wasStarted()) {
+            try {
+                httpServer = OperitHttpServer(this, 8765)
+                httpServer?.start()
+                isRunning = true
+                Log.i(TAG, "HTTP server started on port 8765")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start HTTP server: ${e.message}")
+                isRunning = false
+            }
+        }
+    }
+    
+    private fun stopService() {
+        Log.i(TAG, "Stopping service")
+        httpServer?.stop()
+        httpServer = null
+        isRunning = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+    
+    override fun onBind(intent: Intent?): IBinder? = null
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        httpServer?.stop()
+        httpServer = null
+        isRunning = false
+        Log.i(TAG, "Service destroyed")
+    }
+    
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Operit Plugin Background Service"
+                setShowBadge(false)
+            }
+            
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+    
+    private fun createNotification(): Notification {
+        val stopIntent = Intent(this, OperitApiService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        val mainIntent = Intent(this, Class.forName("com.operit.plugin.MainActivity"))
+        val mainPendingIntent = PendingIntent.getActivity(
+            this, 0, mainIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Operit Plugin")
+            .setContentText("API server running on port 8765")
+            .setSmallIcon(android.R.drawable.ic_menu_preferences)
+            .setOngoing(true)
+            .setContentIntent(mainPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
+            .build()
+    }
+}
