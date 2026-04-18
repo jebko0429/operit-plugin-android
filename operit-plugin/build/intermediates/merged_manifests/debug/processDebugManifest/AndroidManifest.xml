@@ -26,6 +26,10 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!-- === CALLS === -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+
     <!-- === SMS === -->
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
@@ -55,6 +59,23 @@
     <!-- === WIFI / NETWORK === -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+    <!-- === CLIPBOARD (uses window access for Android 10+) === -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
+    <!-- === SENSOR === -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+
+    <!-- === SCREEN RECORD / CAPTURE === -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <!-- === BOOT COMPLETE === -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- === QUERY INSTALLED APPS === -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <permission
         android:name="com.operit.plugin.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
@@ -87,7 +108,7 @@
 
         <!-- Background Service for HTTP API -->
         <service
-            android:name="com.operit.plugin.OperitApiService"
+            android:name="com.operit.plugin.server.OperitApiService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />

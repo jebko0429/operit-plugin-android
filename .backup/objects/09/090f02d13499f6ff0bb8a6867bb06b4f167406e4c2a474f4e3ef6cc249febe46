@@ -1,0 +1,46 @@
+package com.operit.plugin
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.provider.Telephony
+import android.telephony.SmsMessage
+import android.util.Log
+
+/**
+ * Receiver for incoming SMS messages
+ */
+class SmsReceiver : BroadcastReceiver() {
+    
+    companion object {
+        private const val TAG = "SmsReceiver"
+        var lastReceivedSms: Map<String, Any>? = null
+        var smsListener: ((Map<String, Any>) -> Unit)? = null
+    }
+    
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+            
+            messages?.forEach { smsMessage ->
+                val smsData = mapOf(
+                    "type" to "incoming_sms",
+                    "from" to smsMessage.originatingAddress,
+                    "body" to smsMessage.messageBody,
+                    "timestamp" to smsMessage.timestampMillis,
+                    "messageId" to smsMessage.messageId,
+                    "protocol" to smsMessage.protocolIdentifierMessage
+                )
+                
+                lastReceivedSms = smsData
+                Log.d(TAG, "SMS received from: ${smsMessage.originatingAddress}")
+                
+                // Notify listener if set (for real-time updates)
+                smsListener?.invoke(smsData)
+                
+                // Store for API access
+                PendingSmsQueue.add(smsData)
+            }
+        }
+    }
+}

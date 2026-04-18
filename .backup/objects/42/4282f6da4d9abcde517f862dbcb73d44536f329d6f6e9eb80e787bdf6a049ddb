@@ -1,0 +1,39 @@
+package com.operit.plugin
+
+import java.util.concurrent.CopyOnWriteArrayList
+
+/**
+ * Queue for storing pending incoming SMS messages
+ * Accessible via API for real-time SMS access
+ */
+object PendingSmsQueue {
+    private val queue = CopyOnWriteArrayList<Map<String, Any>>()
+    private const val MAX_SIZE = 100
+    
+    fun add(sms: Map<String, Any>) {
+        queue.add(sms)
+        if (queue.size > MAX_SIZE) {
+            queue.removeAt(0) // Remove oldest
+        }
+    }
+    
+    fun getAll(): List<Map<String, Any>> {
+        return queue.toList()
+    }
+    
+    fun getAndClear(): List<Map<String, Any>> {
+        val result = queue.toList()
+        queue.clear()
+        return result
+    }
+    
+    fun peek(): Map<String, Any>? {
+        return queue.firstOrNull()
+    }
+    
+    fun clear() {
+        queue.clear()
+    }
+    
+    fun size(): Int = queue.size
+}
